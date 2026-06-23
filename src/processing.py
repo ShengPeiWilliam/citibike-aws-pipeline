@@ -33,7 +33,11 @@ def process(year, month):
 
     # load citibike
     citibike_key = f"raw/citibike/year={year}/month={month_str}/JC-{year}{month_str}-citibike-tripdata.csv"
-    citibike = read_csv_from_s3(citibike_key)
+    try:
+        citibike = read_csv_from_s3(citibike_key)
+    except Exception:
+        print(f"Skipping {year}-{month_str}: citibike data not found")
+        return
     citibike["date"] = pd.to_datetime(citibike["started_at"]).dt.date.astype(str)
 
     daily = citibike.groupby("date").agg(
