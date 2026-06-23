@@ -32,7 +32,7 @@ def download_and_upload(year, month):
         extracted_name = z.namelist()[0]
     local_csv = f"/tmp/{extracted_name}"
 
-    s3_key = f"raw/year={year}/month={month_str}/{extracted_name}"
+    s3_key = f"raw/citibike/year={year}/month={month_str}/{extracted_name}"
     print(f"Uploading to s3://{BUCKET}/{s3_key}...")
     try:
         s3.upload_file(local_csv, BUCKET, s3_key)
