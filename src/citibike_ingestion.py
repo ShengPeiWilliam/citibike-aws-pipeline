@@ -44,5 +44,5 @@ def download_and_upload(year, month):
     print(f"Done: {extracted_name}")
 
 if __name__ == "__main__":
-    for month in range(2, 10):
+    for month in range(1, 13):
         download_and_upload(2024, month)
