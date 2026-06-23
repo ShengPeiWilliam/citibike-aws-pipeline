@@ -17,25 +17,31 @@ def download_and_upload(year, month):
     local_csv = f"/tmp/{csv_filename}"
 
     print(f"Downloading {zip_filename}...")
-    r = requests.get(url)
+    r = requests.get(url, stream=True)
     if r.status_code != 200:
         print(f"Failed: {url}")
         return
 
     with open(local_zip, "wb") as f:
-        f.write(r.content)
+        for chunk in r.iter_content(chunk_size=8192):
+            f.write(chunk)
 
     print(f"Unzipping...")
     with zipfile.ZipFile(local_zip, "r") as z:
         z.extractall("/tmp/")
+        extracted_name = z.namelist()[0]
+    local_csv = f"/tmp/{extracted_name}"
 
-    s3_key = f"raw/year={year}/month={month_str}/{csv_filename}"
+    s3_key = f"raw/year={year}/month={month_str}/{extracted_name}"
     print(f"Uploading to s3://{BUCKET}/{s3_key}...")
-    s3.upload_file(local_csv, BUCKET, s3_key)
-
-    os.remove(local_zip)
-    os.remove(local_csv)
-    print(f"Done: {csv_filename}")
+    try:
+        s3.upload_file(local_csv, BUCKET, s3_key)
+    finally:
+        if os.path.exists(local_zip):
+            os.remove(local_zip)
+        if os.path.exists(local_csv):
+            os.remove(local_csv)
+    print(f"Done: {extracted_name}")
 
 if __name__ == "__main__":
     for month in range(2, 10):
