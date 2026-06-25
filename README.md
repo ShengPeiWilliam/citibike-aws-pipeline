@@ -1,6 +1,6 @@
 # NYC Citibike Demand Analysis (BSTS)
 
-[![Full Report](https://img.shields.io/badge/📄_Read_Full_Report-PDF-blue?style=for-the-badge)](report/citybike_report.tex)
+[![Full Report](https://img.shields.io/badge/📄_Read_Full_Report-PDF-blue?style=for-the-badge)](report/citybike_report.pdf)
 
 Daily member vs casual ridership analysis on 1,065 days of NYC Citibike data
 (2022--2024), using Bayesian Structural Time Series to separate how two
