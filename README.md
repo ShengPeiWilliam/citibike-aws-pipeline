@@ -14,6 +14,8 @@ two groups (+461 member, -520 casual), while temperature sensitivity is
 similar across both. Season effects vanish entirely once temperature and
 weather category are controlled for.
 
+[See business recommendations →](#business-recommendations)
+
 ## Motivation
 
 This project builds on a progression of earlier work.
@@ -81,9 +83,17 @@ suppressed regardless of conditions.
 
 ## Business Recommendations
 
-1. **Weekday capacity**: Optimize station allocation for predictable member commuting patterns, which are stable regardless of weather
-2. **Weekend promotions**: Target casual rider campaigns on non-working days with favorable weather forecasts, when casual demand peaks
-3. **Weather-based pricing**: Rainy-day incentives (e.g., discounted casual trips) could retain casual riders during adverse weather and build habitual usage
+**1. Weekday capacity**: Member demand is predictable and weather-resistant. Station allocation on workdays can be planned in advance with high confidence.
+
+**2. Weekend promotions**: Casual ridership peaks when non-working days and good weather coincide. The model's interaction structure maps directly to a notification trigger: push a discount to non-members the night before when both conditions are predicted.
+
+> *Friday night. Tomorrow is sunny and free. The app nudges non-members before they make other plans.*
+
+**3. Weather-based pricing**: A rainy day is a churn risk for casual riders. Discounted trips during adverse weather could keep them engaged and build habitual usage.
+
+> *A casual rider checks the app on a drizzly Tuesday. A small nudge, "rainy day discount, 20% off", might be the difference between skipping and showing up.*
+
+---
 
 ## Reflections & Next Steps
 
@@ -104,7 +114,11 @@ src/
 ├── citybike_ingestion.py   # Citibike trip data ingestion to AWS S3
 ├── weather_ingestion.py    # Open-Meteo weather data ingestion
 └── processing.py           # Data merging and feature engineering
-report/                     # LaTeX report and R analysis
+code/
+├── citybike_analysis.ipynb # R analysis and BSTS modeling
+├── citybike_analysis.Rmd   # R Markdown source
+└── citybike_analysis.html  # Rendered report
+report/                     # LaTeX report and figures
 figures/                    # EDA and model output plots
 ```
 
