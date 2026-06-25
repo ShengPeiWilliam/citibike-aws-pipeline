@@ -1,0 +1,367 @@
+---
+jupyter:
+  jupytext:
+    text_representation:
+      extension: .Rmd
+      format_name: rmarkdown
+      format_version: '1.2'
+      jupytext_version: 1.19.1
+  kernelspec:
+    display_name: R
+    language: R
+    name: ir
+---
+
+# NYC Citibike Demand Analysis: Member vs Casual
+
+```{r}
+library(arrow)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(reshape2)
+library(car)
+library(bsts)
+library(ggplot2)
+```
+
+# Data
+
+
+## Dataset Overview
+
+```{r}
+bucket <- "citibike-pipeline-william-842549706992-us-east-1-an"
+
+ds <- open_dataset(
+  s3_bucket(bucket, region = "us-east-1")$path("processed"),
+  format = "csv"
+)
+citybike.data <- ds |> collect()
+
+glimpse(citybike.data)
+```
+
+```{r}
+summary(citybike.data)
+```
+
+```{r}
+table(citybike.data$weathercode)
+```
+
+```{r}
+citybike.data <- citybike.data |>
+  select(-yr, -mnth) |>
+  mutate(
+    season     = factor(season, levels = 1:4, labels = c("Winter", "Spring", "Summer", "Fall")),
+    weekday    = factor(weekday, levels = 0:6),
+    workingday = factor(workingday, levels = c(0, 1)),
+    holiday    = factor(holiday, levels = c(0, 1)),
+    weather_cat = case_when(
+      weathercode %in% c(0, 1, 2)                ~ 1L,
+      weathercode %in% c(3, 45)                  ~ 2L,
+      weathercode %in% c(51, 53, 55, 61)         ~ 3L,
+      weathercode %in% c(63, 65, 66, 80, 81, 82) ~ 4L,
+      weathercode %in% c(71, 73, 75)             ~ 5L,
+      weathercode == 95                           ~ 6L
+    ) |> factor(levels = 1:6, labels = c("Clear", "Cloudy", "Light Rain", "Rain", "Snow", "Storm"))
+  ) |>
+  select(-weathercode)
+```
+
+```{r}
+summary(citybike.data)
+```
+
+```{r}
+table(citybike.data$weather_cat)
+```
+
+```{r}
+citybike.na <- citybike.data |> 
+  summarise(
+    Total_Observations = n(),
+    Missing_Values = sum(is.na(across(everything())))
+  ) |>
+  as.data.frame() 
+
+print(citybike.na, row.names = FALSE)
+```
+
+# Exploratory Data Analysis
+
+
+## Feature Distribution
+
+```{r}
+ggplot(citybike.data, aes(x = total_rides, fill = season)) +
+  geom_histogram(bins = 30, alpha = 0.6, position = "identity") +
+  labs(title = "Distribution of Daily Bike Rentals by Season",
+       x = "Total Rides", y = "Frequency")
+```
+
+```{r}
+citybike.data |>
+  pivot_longer(cols = c(member_count, casual_count),
+               names_to = "type", values_to = "count") |>
+  ggplot(aes(x = workingday, y = count, fill = type)) +
+  geom_boxplot(alpha = 0.7) +
+  labs(title = "Member vs Casual by Workingday",
+       x = "Workingday", y = "Count")
+```
+
+```{r}
+citybike.data |>
+  pivot_longer(cols = c(member_count, casual_count),
+               names_to = "type", values_to = "count") |>
+  ggplot(aes(x = temp_max, y = count, color = type)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Member vs Casual by Temperature",
+       x = "Max Temperature (°C)", y = "Count")
+```
+
+```{r}
+citybike.data |>
+  filter(precipitation < 20) |>
+  pivot_longer(cols = c(member_count, casual_count),
+               names_to = "type", values_to = "count") |>
+  ggplot(aes(x = precipitation, y = count, color = type)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Member vs Casual by Precipitation (< 20mm)",
+       x = "Precipitation (mm)", y = "Count")
+```
+
+```{r}
+citybike.data |>
+  pivot_longer(cols = c(member_count, casual_count),
+               names_to = "type", values_to = "count") |>
+  ggplot(aes(x = windspeed_max, y = count, color = type)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Member vs Casual by Wind Speed",
+       x = "Max Wind Speed (km/h)", y = "Count")
+```
+
+## Feature Correlation
+
+```{r}
+numeric.features <- c("total_rides", "member_count", "casual_count",
+                      "temp_max", "temp_min", "atemp_mean",
+                      "precipitation", "windspeed_max", "humidity_mean")
+
+cor.matrix <- cor(citybike.data[, numeric.features], use = "complete.obs")
+cor.melted <- melt(cor.matrix)
+
+ggplot(cor.melted, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2)), size = 3, color = "white") +
+  scale_fill_gradient2(low = "grey90", mid = "steelblue", high = "navy",
+                       midpoint = 0, limits = c(-1, 1)) +
+  labs(title = "Correlation Matrix", x = "", y = "") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## Multicollinearity Check (VIF)
+
+```{r}
+compute_vif <- function(data) {
+  lm.proxy <- lm(total_rides ~ temp_max + precipitation + 
+                   windspeed_max + humidity_mean + 
+                   season + workingday + weather_cat, data = data)
+  vif.result <- vif(lm.proxy)
+  print(vif.result)
+  invisible(vif.result)
+}
+
+compute_vif(citybike.data)
+```
+
+# Methodology
+
+
+## Model Specification
+
+```{r}
+run_bsts <- function(data, target, formula, niter = 1000, seed = 42) {
+  set.seed(seed)
+  ss <- AddLocalLinearTrend(list(), data[[target]])
+  ss <- AddSeasonal(ss, data[[target]], nseasons = 7)
+  
+  model <- bsts(formula,
+                state.specification = ss,
+                data = data,
+                niter = niter)
+  
+  return(model)
+}
+```
+
+```{r}
+run_ols <- function(data, formula) {
+  model <- lm(formula, data = data)
+  return(model)
+}
+```
+
+## Baseline
+
+
+### Member Baseline
+
+```{r}
+member.baseline <- run_bsts(
+  data    = citybike.data,
+  target  = "member_count",
+  formula = member_count ~ temp_max + precipitation + 
+              windspeed_max + humidity_mean + 
+              season + workingday + weather_cat
+)
+```
+
+```{r}
+plot(member.baseline, main = "Member Baseline BSTS")
+```
+
+```{r}
+summary(member.baseline)
+```
+
+### Casual Baseline
+
+```{r}
+casual.baseline <- run_bsts(
+  data    = citybike.data,
+  target  = "casual_count",
+  formula = casual_count ~ temp_max + precipitation + 
+              windspeed_max + humidity_mean + 
+              season + workingday + weather_cat
+)
+```
+
+```{r}
+plot(casual.baseline, main = "Casual Baseline BSTS")
+```
+
+```{r}
+summary(casual.baseline)
+```
+
+## Interaction
+
+
+### Member with Interaction
+
+```{r}
+member.interaction <- run_bsts(
+  data    = citybike.data,
+  target  = "member_count",
+  formula = member_count ~ temp_max + precipitation + 
+              windspeed_max + humidity_mean + 
+              season + workingday + weather_cat +
+              temp_max:workingday + precipitation:workingday
+)
+```
+
+```{r}
+plot(member.interaction, main = "Member BSTS with Interaction")
+```
+
+```{r}
+summary(member.interaction)
+```
+
+### Casual with Interaction
+
+```{r}
+casual.interaction <- run_bsts(
+  data    = citybike.data,
+  target  = "casual_count",
+  formula = casual_count ~ temp_max + precipitation + 
+              windspeed_max + humidity_mean + 
+              season + workingday + weather_cat +
+              temp_max:workingday + precipitation:workingday
+)
+```
+
+```{r}
+plot(casual.interaction, main = "Casual BSTS with Interaction")
+```
+
+```{r}
+summary(casual.interaction)
+```
+
+# Model Comparison
+
+
+## Coefficient Comparison Across Models
+
+```{r}
+extract_coef <- function(model, model_name) {
+  coef <- summary(model)$coefficients
+  data.frame(
+    term     = rownames(coef),
+    mean     = coef[, "mean"],
+    sd       = coef[, "sd"],
+    inc.prob = coef[, "inc.prob"],
+    model    = model_name
+  )
+}
+
+coef.all <- rbind(
+  extract_coef(member.baseline,    "Member Baseline"),
+  extract_coef(casual.baseline,    "Casual Baseline"),
+  extract_coef(member.interaction, "Member Interaction"),
+  extract_coef(casual.interaction, "Casual Interaction")
+)
+
+coef.sig <- coef.all |> filter(inc.prob > 0.9)
+
+ggplot(coef.sig, aes(x = term, y = mean, color = model)) +
+  geom_point(position = position_dodge(0.5), size = 2) +
+  geom_errorbar(aes(ymin = mean - 1.96 * sd, ymax = mean + 1.96 * sd),
+                position = position_dodge(0.5), width = 0.3) +
+  coord_flip() +
+  labs(title = "Coefficient Comparison Across Models",
+       x = "", y = "Coefficient Mean") +
+  theme_minimal()
+```
+
+```{r}
+coef.all |>
+  filter(term == "workingday1", model %in% c("Member Baseline", "Casual Baseline")) |>
+  select(model, mean) |>
+  mutate(mean = round(mean, 2)) |>
+  summarise(
+    member_coef  = mean[model == "Member Baseline"],
+    casual_coef  = mean[model == "Casual Baseline"],
+    difference   = member_coef - casual_coef,
+    ratio        = round(abs(member_coef / casual_coef), 2)
+  ) |>
+  print(row.names = FALSE)
+```
+
+## OLS Comparison 
+
+```{r}
+member.ols <- run_ols(
+  data    = citybike.data,
+  formula = member_count ~ temp_max + precipitation + 
+              windspeed_max + humidity_mean + 
+              season + workingday + weather_cat
+)
+
+casual.ols <- run_ols(
+  data    = citybike.data,
+  formula = casual_count ~ temp_max + precipitation + 
+              windspeed_max + humidity_mean + 
+              season + workingday + weather_cat
+)
+
+summary(member.ols)
+summary(casual.ols)
+```
