@@ -101,7 +101,7 @@ Next steps:
 
 ```
 src/
-├── citibike_ingestion.py   # Citibike trip data ingestion to AWS S3
+├── citybike_ingestion.py   # Citibike trip data ingestion to AWS S3
 ├── weather_ingestion.py    # Open-Meteo weather data ingestion
 └── processing.py           # Data merging and feature engineering
 report/                     # LaTeX report and R analysis
